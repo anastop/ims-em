@@ -10,24 +10,36 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	"net/http"
+	"log"
+	"encoding/json"
+	"flag"
 )
 
+type IMSLatency struct {
+	Q99, Q95, Q90, Q75, Q50 int64
+}
 var (
 	hist *hdrhistogram.Histogram
-	q50, q75, q90, q95, q99 int64
+	lat IMSLatency
 )
 
-func report() {
-	q99 = hist.ValueAtQuantile(99.0)
-	q95 = hist.ValueAtQuantile(95.0)
-	q90 = hist.ValueAtQuantile(90.0)
-	q75 = hist.ValueAtQuantile(75.0)
-	q50 = hist.ValueAtQuantile(50.0)
-	fmt.Printf("\n\nQuantiles: %d %d %d %d %d", q99, q95, q90, q75, q50)
+func HTTPHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(lat)
 }
 
-func reporter(c chan os.Signal, d chan int64) {
-	ticker := time.NewTicker(5 * time.Second)
+func record() {
+	lat.Q99 = hist.ValueAtQuantile(99.0)
+	lat.Q95 = hist.ValueAtQuantile(95.0)
+	lat.Q90 = hist.ValueAtQuantile(90.0)
+	lat.Q75 = hist.ValueAtQuantile(75.0)
+	lat.Q50 = hist.ValueAtQuantile(50.0)
+	fmt.Printf("%+v (%d)\n", lat, hist.TotalCount())
+}
+
+func recorder(c chan os.Signal, d chan int64, interval int) {
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	var latency int64
 	for {
 		select {
@@ -35,20 +47,17 @@ func reporter(c chan os.Signal, d chan int64) {
 			hist.RecordValue(latency)
 
 		case <-ticker.C:
-			report()
+			record()
 			hist.Reset()
 
-		case sig := <-c:
-			fmt.Println(sig)
+		case <-c:
+			os.Exit(0)
 		}
 	}
 
 }
 
 func scanner(exp string, d chan int64) {
-	// max assumed latency: 10 sec, min assumed latency: 1 usec
-	hist = hdrhistogram.New(1, 10000000, 2)
-
 	in := bufio.NewScanner(os.Stdin)
 	re := regexp.MustCompile(exp)
 
@@ -63,13 +72,22 @@ func scanner(exp string, d chan int64) {
 		}
 
 	}
-	report()
 }
 
 func main() {
+	updateInterval := flag.Int("update-interval", 10,
+		"Interval after which the histogram stats should be cleared and populated again")
+	flag.Parse()
+
 	sigs := make(chan os.Signal, 1)
 	data := make(chan int64)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-	go reporter(sigs, data)
-	scanner(`(\d+)usec`, data)
+	// max assumed latency: 10 sec, min assumed latency: 1 usec
+	hist = hdrhistogram.New(1, 10000000, 2)
+
+	go recorder(sigs, data, *updateInterval)
+	go scanner(`(\d+)usec`, data)
+
+	http.HandleFunc("/data", HTTPHandler)
+	log.Fatal(http.ListenAndServe(":9000", nil))
 }

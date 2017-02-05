@@ -8,7 +8,7 @@ import (
 
 func main() {
 	for {
-		time.Sleep(2*time.Millisecond)
+		time.Sleep(1*time.Millisecond)
 		fmt.Printf("%dusec \n", rand.Int63n(9999999))
 	}
 }
