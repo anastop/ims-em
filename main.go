@@ -1,27 +1,28 @@
 package main
 
 import (
-	"github.com/codahale/hdrhistogram"
-	"fmt"
 	"bufio"
-	"os"
-	"regexp"
-	"strconv"
-	"os/signal"
-	"syscall"
-	"time"
-	"net/http"
-	"log"
 	"encoding/json"
 	"flag"
+	"fmt"
+	"github.com/codahale/hdrhistogram"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"regexp"
+	"strconv"
+	"syscall"
+	"time"
 )
 
 type IMSLatency struct {
 	Q99, Q95, Q90, Q75, Q50 int64
 }
+
 var (
 	hist *hdrhistogram.Histogram
-	lat IMSLatency
+	lat  IMSLatency
 )
 
 func HTTPHandler(w http.ResponseWriter, r *http.Request) {
@@ -86,8 +87,8 @@ func main() {
 	hist = hdrhistogram.New(1, 10000000, 2)
 
 	go recorder(sigs, data, *updateInterval)
-	go scanner(`(\d+)usec`, data)
+	go scanner(`Request latency = (\d+) us`, data)
 
-	http.HandleFunc("/data", HTTPHandler)
+	http.HandleFunc("/v1/data", HTTPHandler)
 	log.Fatal(http.ListenAndServe(":9000", nil))
 }
